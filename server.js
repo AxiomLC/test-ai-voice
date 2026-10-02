@@ -1,4 +1,5 @@
 // Test3-Voice-AI — single launcher. Serves UI + proxies LLM and TTS (keys stay server-side).
+// Routing only; TTS adapters live in lib/tts-*.js (one file per engine).
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,23 +25,8 @@ for (const k of ['KOKORO', 'POCKET', 'PIPER']) {
 const bye = () => { children.forEach(c => { try { c.kill(); } catch {} }); process.exit(); };
 process.on('SIGINT', bye); process.on('SIGTERM', bye);
 
-// ---------- TTS adapters: each returns a fetch Response with a WAV body ----------
-const tts = {
-  kokoro: text => fetch(E.KOKORO_URL, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: 'kokoro', input: text, voice: E.KOKORO_VOICE || 'af_heart',
-                           response_format: 'wav', stream: false })
-  }),
-  pocket: text => {
-    const f = new FormData(); f.append('text', text);
-    if (E.POCKET_VOICE) f.append('voice_url', E.POCKET_VOICE);
-    return fetch(E.POCKET_URL, { method: 'POST', body: f });
-  },
-  piper: text => fetch(E.PIPER_URL, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text })
-  }),
-};
+// ---------- TTS adapters ----------
+import { tts as adapters } from './lib/tts.js';
 
 // ---------- LLM ----------
 async function llm(messages) {
@@ -108,8 +94,8 @@ http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && req.url === '/api/tts') {
       const t0 = Date.now(); const { engine, text } = JSON.parse(await body(req));
-      if (!tts[engine]) return json(res, 400, { error: 'unknown engine' });
-      const r = await tts[engine](text);
+      if (!adapters[engine]) return json(res, 400, { error: 'unknown engine' });
+      const r = await adapters[engine](text);
       if (!r.ok) return json(res, 502, { error: `${engine} ${r.status}: ${(await r.text()).slice(0, 200)}` });
       // pipe the upstream body through as it arrives (enables TTS audio streaming)
       res.writeHead(200, { 'Content-Type': r.headers.get('content-type') || 'audio/wav', 'X-TTS-Ms': Date.now() - t0 });
@@ -119,7 +105,8 @@ http.createServer(async (req, res) => {
     if (req.url === '/favicon.ico') { res.writeHead(204); return res.end(); }
     const f = path.join(__dir, 'public', req.url === '/' ? 'index.html' : req.url.split('?')[0]);
     if (!f.startsWith(path.join(__dir, 'public')) || !fs.existsSync(f)) { res.writeHead(404); return res.end('not found'); }
-    res.writeHead(200, { 'Content-Type': f.endsWith('.html') ? 'text/html' : 'text/plain' });
+    const types = { html: 'text/html', css: 'text/css', js: 'text/javascript', svg: 'image/svg+xml' };
+    res.writeHead(200, { 'Content-Type': types[f.slice(f.lastIndexOf('.') + 1)] || 'text/plain' });
     fs.createReadStream(f).pipe(res);
   } catch (e) {
     const refused = /fetch failed|ECONNREFUSED/.test(String(e) + String(e.cause));

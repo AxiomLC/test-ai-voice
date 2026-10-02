@@ -8,7 +8,9 @@ param([switch]$Clean)
 $ErrorActionPreference = 'Stop'
 
 $proj   = 'C:\Users\q1fre\ZED\test_voice_ai_20261002'
+$logs   = "$proj\logs"
 $pocket = 'C:\Users\q1fre\AppData\Local\hermes\desktop-plugins\lars\voice\.venv\Scripts\python.exe'
+if (-not (Test-Path $logs)) { New-Item -ItemType Directory -Path $logs | Out-Null }
 
 function Test-Port($port) {
   try { $c = New-Object Net.Sockets.TcpClient; $c.Connect('127.0.0.1', $port); $c.Close(); return $true }
@@ -50,7 +52,7 @@ else {
   Write-Host '  starting (cold start can take 2-3 min)...'
   Start-Process -WindowStyle Hidden -FilePath $pocket `
     -ArgumentList '-m','pocket_tts','serve','--port','8001','--default-voice','alba' `
-    -WorkingDirectory $proj -RedirectStandardOutput "$proj\pocket.log" -RedirectStandardError "$proj\pocket.err.log"
+    -WorkingDirectory $proj -RedirectStandardOutput "$logs\pocket.log" -RedirectStandardError "$logs\pocket.err.log"
   Wait-Port 8001 'Pocket' 180 | Out-Null
 }
 
@@ -58,7 +60,7 @@ Write-Host '== Kokoro-FastAPI :8880 =='
 if (Test-Port 8880) { Write-Host '  already up, skip' }
 else {
   Write-Host '  starting (cold start can take 2-3 min)...'
-  Start-Process -WindowStyle Hidden -FilePath 'powershell' -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','C:\Kokoro-FastAPI\kokoro-run.ps1'
+  Start-Process -WindowStyle Hidden -FilePath 'powershell' -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','C:\Kokoro-FastAPI\kokoro-run.ps1' -WorkingDirectory "$logs"
   Wait-Port 8880 'Kokoro' 240 | Out-Null
 }
 
@@ -68,7 +70,7 @@ else {
   Write-Host '  starting...'
   Start-Process -WindowStyle Hidden -FilePath 'python' `
     -ArgumentList '-m','piper.http_server','-m',"$proj\voices\en_US-lessac-medium.onnx",'--port','5000' `
-    -WorkingDirectory $proj -RedirectStandardOutput "$proj\piper.log" -RedirectStandardError "$proj\piper.err.log"
+    -WorkingDirectory $proj -RedirectStandardOutput "$logs\piper.log" -RedirectStandardError "$logs\piper.err.log"
   Wait-Port 5000 'Piper' 60 | Out-Null
 }
 
@@ -76,7 +78,7 @@ else {
 Write-Host '== App :4400 =='
 # In -Clean mode it was already stopped above; otherwise stopped just before this.
 Start-Process -WindowStyle Hidden -FilePath 'node' -ArgumentList '--env-file=.env','server.js' `
-  -WorkingDirectory $proj -RedirectStandardOutput "$proj\app.log" -RedirectStandardError "$proj\app.err.log"
+  -WorkingDirectory $proj -RedirectStandardOutput "$logs\app.log" -RedirectStandardError "$logs\app.err.log"
 Wait-Port 4400 'App' 60 | Out-Null
 
 # ---------- 4. health summary ----------
